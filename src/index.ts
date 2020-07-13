@@ -25,14 +25,14 @@ const argv = yargs
 	.alias('key', 'client-key').describe('client-key', 'Path to a client key file for TLS')
 	.boolean('insecure-skip-tls-verify').describe('insecure-skip-tls-verify', 'If true, the server\'s certificate will not be checked for validity. This will make your HTTPS connections insecure')
 	.describe('token', 'Bearer token for authentication to the API server')
-	.describe('namespace', 'The namespace to watch').demandOption('namespace')
+	.describe('namespace', 'The namespace to watch').string('namespace').demandOption('namespace')
 	.array('resource-type').describe('resource-type', 'Enabled resource types (empty to enable all, can use multiple times)').default('resource-type', [])
 	.number('port').default('port', process.env.PORT || 8080)
 	.help()
 	.argv;
 
 
-const annotations = [
+const ANNOTATIONS = [
 	'ec2.amazonaws.com/availability-zone',
 	'ec2.amazonaws.com/availability-zone-id',
 ];
@@ -50,50 +50,56 @@ function initMonitoring() {
  *
  * @param name the name of the entity that the promise actually modifies
  * @param promise a promise
- * @return the same promise with added logging
+ * @return nothing
  */
-function logOperationResult(name: string, promise: Promise<any>): Promise<any> {
+function logOperationResult(name: string, promise: Promise<any>): Promise<void> {
 	return promise.then(data => {
 		logger.info(`[${name}]: Success ${JSON.stringify(data)}`);
-		return data;
 	}, err => {
 		logger.error(`[${name}]: Error ${err.message} (${err.code})`);
-		throw err;
 	});
 }
 
 async function updateAnnotations(coreV1: any, pod: Pod, availabilityZones: EC2.AvailabilityZone[]) {
+	function makeResult(status: string, annotations: {[key: string]: string}) {
+		return {
+			status,
+			annotations: ANNOTATIONS.reduce((result, annotation) => ({...result, [annotation]: annotations[annotation]}), {}),
+		}
+	}
+
 	const podName = `${pod.metadata.namespace}/${pod.metadata.name}`;
-	if (annotations.every(annotation => pod.metadata.annotations[annotation])) {
+	if (ANNOTATIONS.every(annotation => pod.metadata.annotations[annotation])) {
 		// Find, everything there.
 		// Pods don't move around nodes, so if we have the annotations set once, we can leave them.
 		logger.trace(`${podName}: Found existing annotations, skipping update`);
-		return;
+		return makeResult('current', pod.metadata.annotations);
 	}
 
 	// Check whether we have a nodeName set
 	// It seems that this may not necessarily be there in the beginning when the pod resource is getting
 	// moved through admission controllers and getting scheduled. We just ignore that silently.
-	if (!pod.nodeName) {
+	const nodeName = pod.spec.nodeName;
+	if (!nodeName) {
 		logger.trace(`${podName}: Missing nodeName, skipping (${JSON.stringify(pod)})`);
-		return;
+		return makeResult('missing-node-name', pod.metadata.annotations);
 	}
 
 	// TODO: Two options here
 	// 1. We can get the region annotation from the node
 	// 2. We can try to find the node by name through the EC2 metadata
 	// The second option is "more costly", given that we would have to call the EC2 API constantly.
-	const node = coreV1.nodes.get(pod.nodeName);
+	const node = await coreV1.node(nodeName).get();
 	if (!node) {
 		// XXX: Should we blacklist this pod/node/...?
-		logger.warn(`${podName}: Cannot GET node ${pod.nodeName}`);
-		return;
+		logger.warn(`${podName}: Cannot GET node ${nodeName}`);
+		return makeResult('unavailable-node', pod.metadata.annotations);
 	}
 
-	const availabilityZoneName = node.metadata.annotations['failure-domain.beta.kubernetes.io/zone'];
+	const availabilityZoneName = node.metadata.labels['failure-domain.beta.kubernetes.io/zone'];
 	if (!availabilityZoneName) {
-		logger.warn(`${podName}: Missing failure-domain.beta.kubernetes.io/zone annotation on node ${pod.nodeName}`);
-		return;
+		logger.warn(`${podName}: Missing failure-domain.beta.kubernetes.io/zone label on node ${nodeName}`);
+		return makeResult('missing-failure-domain-zone', pod.metadata.annotations);
 	}
 
 	// Start building up the patch
@@ -118,11 +124,12 @@ async function updateAnnotations(coreV1: any, pod: Pod, availabilityZones: EC2.A
 
 	// Apply the patches
 	logger.debug(`${podName}: Applying ${JSON.stringify(operations)}`);
-	await coreV1.pod(podName).patch(operations, 'application/json-patch');
+	const updated = await coreV1.ns(pod.metadata.namespace).pod(pod.metadata.name).patch(operations, 'application/json-patch+json');
+	return makeResult('updated', updated.metadata.annotations);
 }
 
-async function resourceLoop(coreV1: any, ec2: EC2, onUpdate: (pod: Pod, availabilityZones: EC2.AvailabilityZone[]) => Promise<void>) {
-	const pods = coreV1.pods;
+async function resourceLoop(coreV1: any, namespace: string, ec2: EC2, onUpdate: (pod: Pod, availabilityZones: EC2.AvailabilityZone[]) => Promise<any>) {
+	const pods = coreV1.ns(namespace).pods;
 	const list = await pods.list();
 	const resourceVersion = list.metadata.resourceVersion;
 
@@ -133,13 +140,14 @@ async function resourceLoop(coreV1: any, ec2: EC2, onUpdate: (pod: Pod, availabi
 	// If not: Schedule them for processing.
 	const pending: Pod[] = [];
 	for (const resource of list.items) {
-		if (!annotations.every(annotation => resource.metadata.annotations[annotation])) {
+		if (!ANNOTATIONS.every(annotation => resource.metadata.annotations[annotation])) {
 			pending.push(resource);
 		}
 	}
 	setImmediate(() => {
 		for (const resource of pending) {
-			onUpdate(resource, availabilityZones!);
+			const name = `${resource.metadata.namespace}/${resource.metadata.name}`;
+			logOperationResult(name, onUpdate(resource, availabilityZones!));
 		}
 	});
 
@@ -148,9 +156,9 @@ async function resourceLoop(coreV1: any, ec2: EC2, onUpdate: (pod: Pod, availabi
 	pods.watch(resourceVersion)
 		.on('data', (item: any) => {
 			const resource = item.object;
-			const name = resource.metadata.name;
+			const name = `${resource.metadata.namespace}/${resource.metadata.name}`;
 
-			let result;
+			let result: Promise<void>|undefined;
 			switch (item.type) {
 			case 'ADDED':
 			case 'MODIFIED':
@@ -178,7 +186,7 @@ async function resourceLoop(coreV1: any, ec2: EC2, onUpdate: (pod: Pod, availabi
 		.on('end', () => {
 			// Restart the watch from the last known version.
 			logger.info(`Watch of pods ended, restarting`);
-			resourceLoop(coreV1, ec2, onUpdate);
+			resourceLoop(coreV1, namespace, ec2, onUpdate);
 		});
 }
 
@@ -197,13 +205,13 @@ async function main() {
 		try {
 			const k8sConfig = createK8sConfig(argv);
 			const k8sClient = await k8s(k8sConfig);
-			const coreV1 = k8sClient.group('', 'v1').ns(argv.namespace);
+			const coreV1 = k8sClient.group('', 'v1');
 
 			const onUpdate = async (pod: Pod, availabilityZones: EC2.AvailabilityZone[]) => {
 				return updateAnnotations(coreV1, pod, availabilityZones);
 			};
 
-			const resourceLoopPromise = resourceLoop(coreV1, ec2, onUpdate).catch(err => {
+			const resourceLoopPromise = resourceLoop(coreV1, argv.namespace, ec2, onUpdate).catch(err => {
 				logger.error(`Error when monitoring pods: ${err.message}`);
 				throw err;
 			});
