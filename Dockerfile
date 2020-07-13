@@ -30,7 +30,7 @@ RUN if [ -f /etc/alpine-release ]; then apk add --no-cache openssl lz4-libs zlib
 
 WORKDIR /app
 COPY --from=build /source/build /app/build
-COPY --from=build /source/package.json /source/log4js.json /app
+COPY --from=build /source/package.json /source/log4js.json /app/
 # Copy the dependencies and prune them for the selected environment
 # This saves in amount of bytes downloaded from the internet, and avoids having the npm token stored in the
 # runtime container image
