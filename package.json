@@ -1,6 +1,6 @@
 {
   "name": "@collaborne/kubernetes-aws-metadata-service",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Service that adds AWS-specific annotations to pods",
   "scripts": {
     "build": "tsc",
