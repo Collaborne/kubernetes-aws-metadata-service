@@ -1,0 +1,27 @@
+dist: bionic
+group: beta
+
+language: minimal
+services:
+- docker
+before_install:
+- if [ "${TRAVIS_PULL_REQUEST}" = "false" ]; then BASE_NAME=${TRAVIS_BRANCH}; else BASE_NAME=pr${TRAVIS_PULL_REQUEST}; fi
+- NAME=`echo ${BASE_NAME} | tr -cd '[\-._[:alnum:]]'`
+- TS=`date +%Y%m%dT%H%M%S`
+- VERSION_TAG=${NAME}-${TS}-${TRAVIS_COMMIT}
+- TAGS="${NAME} ${VERSION_TAG}"
+- if [ "${TRAVIS_PULL_REQUEST}" = "false" ] && [ "${TRAVIS_BRANCH}" = "master" ]; then TAGS="${TAGS} latest"; fi
+
+- echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+script:
+- docker build `echo ${TAGS} | sed -re "s,\b([-._[:alnum:]]+)\b,-t ${DOCKER_NAME}:\1,g"` .
+deploy:
+  provider: script
+  script: "${SHELL} ci/docker-push.sh ${DOCKER_NAME} ${TAGS}"
+  on:
+    all_branches: true
+env:
+  global:
+  - DOCKER_NAME=collaborne/kubernetes-aws-metadata-service
+  - secure: "o3yqfAdH5P3eY9yCCJZXUpD2gZSwmX+ke/k4GL8xzy5evQfcnqIXi8mdcXA/vNKx0zPz3Jd5Oj2D1j2Ppx+/9LXq4aX6ULMJ57bT2F89xvkP3sNnQlTWwB6SS7o3RXS1q6fZyfrMKC8zW2SxuGIQ0zCOsMfjauETupuSwAawc/8vfpPSVBJSBmfco2hZBXzsfmR32ni8wmQkmBoNXmAg+8QEkGZaACU78nMi7ntTdGcXd0zfD5K5/euJKpgao7n1SkotmtV+cq3o8XSOPjbTIhoHQ69tMCUg0a/buCzgHD/Pp4d+VQ79mJ64RH+dzhW+K47KoZLgnYl8L806ST83Bs5KV1/To25WT8Q8AFH35CFFmkrE0kDEgKK95ro8z5eWmVYjCcA61hb6rTCJXM+GYccFxDtGkFLLDcqc5UaWo2DbRgt3NRKf9Mfza7hmRQAJqniZbS0dFkk1X762npNM1y59EWom9YgcOam8W1YlL/jGxZw2x94xWK0fyE0ndGtIhbyhwqxBCKCkGtAKG25w/t21EZ65LyKcsVYyDUDNjin+9AuAzh57OZ2W/NY3O/g2RPXD/ggfdGaWAelqq3oXEVPodjOrcSiUAbuF4aj0oZrW/Ysqlj5mYKyKRzjAvykTidf9W1qXi8a7nLzLZEOXcvSmVrJ2JvwAKP/+yNfykLY="
+  - secure: "tT1oxl0uiK05WNkG2R0WaRWb4MKFPZsisKH4PaoZeY8gzOAw+yqOdtfGBUgXMBnxjfSyjKLxJ+o7HMVq67iGFpBbe3PVfzbQPKSUfH0tR9ryLGg1ntxWgW8QCSRdCFYc8QSnNXfNcIGO6hT2UkGG3ayugqup/QvFn63h2juYiUoQfl1qiyHDkFXFjeQNdCcN3ijU72OfwMlokDtW1zBRdzviuc8376v1HMw5tqtG4c6XmGOFvOwL0AxPfcmydodR0KeyMRmQBezZxPnJlCNq70H2X3zABygPJvGqXb5WFGY3maZTaizKqxShMhkpPWZLs0NtSWkIoScyQbWDgSnEzal/d1+jvzJc2f2pNno38Pwn9UdHVIijRnJdWuS1Jx7tnAVsTXqOYU4xrBDwfkA8giiqOg9BeLkT1grMWHEOTpZQysDaPPjn1oZa3WE4Z0CN8VfMgy0zu/nukmdDjqXXpXEq5MElJix30UtW8X1CowbmM561hkTpjpa4EUMJi/krpdpQUm/oQVw6nSBuweF7LYZppMwcoGa3p8dGDAz2yxpNgKj02caYSMpzGaeDGIQuYS/UJZVXkFRmHg3/lonSqMB4otbWGQj7azyCpAvqDrPnoEZ1p/G2qeXvPlkjc3QlFChBd3ELM6vSE2c43dMnVAQwW0ooe4dcYmvgJG30xLc="
