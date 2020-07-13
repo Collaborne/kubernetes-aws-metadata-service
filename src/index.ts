@@ -54,9 +54,9 @@ function initMonitoring() {
  */
 function logOperationResult(name: string, promise: Promise<any>): Promise<void> {
 	return promise.then(data => {
-		logger.info(`[${name}]: Success ${JSON.stringify(data)}`);
+		logger.info(`${name}: Success ${JSON.stringify(data)}`);
 	}, err => {
-		logger.error(`[${name}]: Error ${err.message} (${err.code})`);
+		logger.error(`${name}: Error ${err.message} (${err.code})`);
 	});
 }
 
