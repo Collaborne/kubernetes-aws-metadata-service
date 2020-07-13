@@ -1,0 +1,16 @@
+{
+	"appenders": {
+		"out": { "type": "console" }
+	},
+	"replaceConsole": true,
+	"categories": {
+		"default": {
+			"appenders": [ "out" ],
+			"level": "error"
+		},
+		"@collaborne/kubernetes-aws-metadata-service": {
+			"appenders": [ "out" ],
+			"level": "info"
+		}
+	}
+}
