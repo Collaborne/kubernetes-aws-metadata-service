@@ -96,9 +96,11 @@ async function updateAnnotations(coreV1: any, pod: Pod, availabilityZones: EC2.A
 		return makeResult('unavailable-node', pod.metadata.annotations);
 	}
 
-	const availabilityZoneName = node.metadata.labels['failure-domain.beta.kubernetes.io/zone'];
+	// Use the 1.17+ 'topology.kubernetes.io/zone', and fall-back to the pre-1.17 'failure-domain.beta.kubernetes.io/zone'.
+	// https://kubernetes.io/docs/reference/kubernetes-api/labels-annotations-taints/#topologykubernetesiozone
+	const availabilityZoneName = node.metadata.labels['topology.kubernetes.io/zone'] ?? node.metadata.labels['failure-domain.beta.kubernetes.io/zone'];
 	if (!availabilityZoneName) {
-		logger.warn(`${podName}: Missing failure-domain.beta.kubernetes.io/zone label on node ${nodeName}`);
+		logger.warn(`${podName}: Neither topology.kubernetes.io/zone nor failure-domain.beta.kubernetes.io/zone label on node ${nodeName}`);
 		return makeResult('missing-failure-domain-zone', pod.metadata.annotations);
 	}
 
